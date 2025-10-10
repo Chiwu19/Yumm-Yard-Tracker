@@ -1,4 +1,3 @@
-# database.py
 import pandas as pd
 from datetime import date
 import streamlit as st
@@ -7,20 +6,17 @@ import libsql_client
 import nest_asyncio
 nest_asyncio.apply()
 
-# --- NEW: Cached Database Connection ---
-@st.cache_resource
 def get_db_connection():
     """
-    Establishes a single, cached connection to the Turso database for the entire session.
+    Establishes a new connection to the Turso database.
     """
-    st.write("--- CREATING NEW DB CONNECTION ---") # This will only print once per session
     url = st.secrets["TURSO_DATABASE_URL"]
     auth_token = st.secrets["TURSO_AUTH_TOKEN"]
     return libsql_client.create_client(url=url, auth_token=auth_token)
 
 def init_db():
     """Initializes the database tables if they don't exist."""
-    conn = get_db_connection() # Use the cached connection
+    conn = get_db_connection()
     conn.batch([
         """
         CREATE TABLE IF NOT EXISTS menus (
@@ -43,25 +39,29 @@ def init_db():
         )
         """
     ])
-    # No conn.close() needed anymore
+    conn.close() # <-- ADDED BACK
 
 # --- Menu Functions ---
 def get_menu(channel):
     """Retrieves a specific menu (offline or online) as a dictionary."""
     conn = get_db_connection()
     rs = conn.execute("SELECT item_name, price FROM menus WHERE channel = ? ORDER BY item_name", (channel,))
-    return {row["item_name"]: row["price"] for row in rs.rows}
+    menu = {row["item_name"]: row["price"] for row in rs.rows}
+    conn.close() # <-- ADDED BACK
+    return menu
 
 def add_menu_item(item_name, price, channel):
     """Adds or updates an item in a menu."""
     conn = get_db_connection()
     conn.execute("INSERT OR REPLACE INTO menus (item_name, price, channel) VALUES (?, ?, ?)",
                    (item_name, price, channel))
+    conn.close() # <-- ADDED BACK
 
 def delete_menu_item(item_name, channel):
     """Deletes an item from a menu."""
     conn = get_db_connection()
     conn.execute("DELETE FROM menus WHERE item_name = ? AND channel = ?", (item_name, channel))
+    conn.close() # <-- ADDED BACK
 
 # --- Sales Functions ---
 def log_sale(sale_dict):
@@ -82,6 +82,7 @@ def log_sale(sale_dict):
             date.today().isoformat()
         )
     )
+    conn.close() # <-- ADDED BACK
 
 def get_sales(status='live', channel=None, start_date=None, end_date=None):
     """Fetches sales data as a Pandas DataFrame, with optional filters."""
@@ -105,6 +106,7 @@ def get_sales(status='live', channel=None, start_date=None, end_date=None):
     rs = conn.execute(query, params)
     columns = [col for col in rs.columns]
     df = pd.DataFrame(rs.rows, columns=columns)
+    conn.close() # <-- ADDED BACK
     return df
 
 def get_live_revenue(channel):
@@ -114,33 +116,39 @@ def get_live_revenue(channel):
         "SELECT SUM(total_sale) FROM sales WHERE status = 'live' AND channel = ?",
         (channel,)
     )
-    # The result might be None if there are no sales, so we handle that.
     total = rs.rows[0][0]
-    return total if total is not None else 0.0
+    result = total if total is not None else 0.0
+    conn.close() # <-- ADDED BACK
+    return result
 
 def delete_sale_by_timestamp(timestamp):
     """Deletes a single sale using its unique timestamp."""
     conn = get_db_connection()
     conn.execute("DELETE FROM sales WHERE timestamp = ?", (timestamp,))
+    conn.close() # <-- ADDED BACK
 
 def clear_live_sales():
     """Deletes all sales with 'live' status."""
     conn = get_db_connection()
     conn.execute("DELETE FROM sales WHERE status = 'live'")
+    conn.close() # <-- ADDED BACK
 
 def archive_live_sales():
     """Changes the status of all 'live' sales to 'archived' (End of Day action)."""
     conn = get_db_connection()
     conn.execute("UPDATE sales SET status = 'archived' WHERE status = 'live'")
+    conn.close() # <-- ADDED BACK
 
 def get_archived_dates():
     """Returns a sorted list of unique dates for which there are archived sales."""
     conn = get_db_connection()
     rs = conn.execute("SELECT DISTINCT sale_date FROM sales WHERE status = 'archived' ORDER BY sale_date DESC")
-    return [row["sale_date"] for row in rs.rows]
+    dates = [row["sale_date"] for row in rs.rows]
+    conn.close() # <-- ADDED BACK
+    return dates
 
 def delete_archived_sales_by_date(date_str):
     """Permanently deletes all archived sales for a specific date."""
     conn = get_db_connection()
     conn.execute("DELETE FROM sales WHERE status = 'archived' AND sale_date = ?", (date_str,))
-
+    conn.close() # <-- ADDED BACK
