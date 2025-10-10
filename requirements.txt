@@ -1,5 +1,4 @@
 streamlit
 pandas
 plotly-express
-libsql-client
-nest-asyncio
+libsql
