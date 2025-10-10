@@ -43,13 +43,16 @@ st.markdown("---")
 # --- Today's Live Sales Summary ---
 st.header("Today's Revenue")
 
-# Fetch live sales data directly from the database
+# OLD SLOW METHOD IS GONE.
+# NEW EFFICIENT METHOD:
+live_offline_total = db.get_live_revenue(channel='Offline')
+live_online_total = db.get_live_revenue(channel='Online')
+live_grand_total = live_offline_total + live_online_total
+
+# We still need the dataframes for the display tables below, so we fetch them here.
+# This doesn't slow down the revenue calculation at the top of the page.
 todays_offline_df = db.get_sales(status='live', channel='Offline')
 todays_online_df = db.get_sales(status='live', channel='Online')
-
-live_offline_total = todays_offline_df["total_sale"].sum()
-live_online_total = todays_online_df["total_sale"].sum()
-live_grand_total = live_offline_total + live_online_total
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Offline Revenue", f"₹{live_offline_total:.2f}")
