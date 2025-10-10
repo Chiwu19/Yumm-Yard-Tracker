@@ -44,8 +44,12 @@ st.markdown("---")
 # --- Today's Live Sales Summary ---
 st.header("Today's Revenue")
 
-# Fetch live sales data directly from the database (single call)
-live_sales_df = db.get_sales(status='live')
+# Use cached live sales in session_state so we don't refetch the entire table on every small action.
+# The first run will load from the DB; subsequent interactions will update the in-memory copy.
+if 'live_sales_df' not in st.session_state:
+    st.session_state.live_sales_df = db.get_sales(status='live')
+live_sales_df = st.session_state.live_sales_df
+
 # Split into channels in-memory to avoid multiple DB queries
 todays_offline_df = live_sales_df[live_sales_df['channel'] == 'Offline'].copy()
 todays_online_df = live_sales_df[live_sales_df['channel'] == 'Online'].copy()
@@ -64,8 +68,11 @@ st.markdown("---")
 # --- Tabs for Offline and Online Sales ---
 offline_tab, online_tab = st.tabs(["🛒 Offline Sales", "🛵 Online Sales"])
 
-# Load menus once (single DB call)
-menus = db.get_menus()
+# Cache menus in session_state so they are NOT refetched on every rerun.
+# This keeps the menu stable across interactions until the user does a full refresh.
+if 'menus' not in st.session_state:
+    st.session_state.menus = db.get_menus()
+menus = st.session_state.menus
 offline_menu = menus.get('Offline', {})
 online_menu = menus.get('Online', {})
 
@@ -81,14 +88,33 @@ with offline_tab:
             if st.form_submit_button("Log Offline Sale"):
                 price = offline_menu[selected_item]
                 sale_record = {
-                    "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f"), # Added microseconds for uniqueness
+                    "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
                     "Item": selected_item,
                     "Quantity": quantity,
                     "Price per Item (₹)": price,
                     "Total Sale (₹)": price * quantity,
                     "Channel": "Offline"
                 }
+                # Persist to DB
                 db.log_sale(sale_record)
+                # Update the cached live_sales_df locally so we avoid a full-table re-read.
+                new_row = {
+                    "timestamp": sale_record["Timestamp"],
+                    "item_name": sale_record["Item"],
+                    "quantity": sale_record["Quantity"],
+                    "price_per_item": sale_record["Price per Item (₹)"],
+                    "total_sale": sale_record["Total Sale (₹)"],
+                    "channel": sale_record["Channel"],
+                    "sale_date": date.today().isoformat(),
+                    "status": "live"
+                }
+                if 'live_sales_df' in st.session_state:
+                    st.session_state.live_sales_df = pd.concat(
+                        [st.session_state.live_sales_df, pd.DataFrame([new_row])],
+                        ignore_index=True
+                    )
+                else:
+                    st.session_state.live_sales_df = pd.DataFrame([new_row])
                 st.success(f"Logged offline sale of {quantity} x {selected_item}!")
                 st.rerun()
 
@@ -107,14 +133,33 @@ with online_tab:
             if st.form_submit_button("Log Online Sale"):
                 price = online_menu[selected_item]
                 sale_record = {
-                    "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f"), # Added microseconds for uniqueness
+                    "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
                     "Item": selected_item,
                     "Quantity": quantity,
                     "Price per Item (₹)": price,
                     "Total Sale (₹)": price * quantity,
                     "Channel": "Online"
                 }
+                # Persist to DB
                 db.log_sale(sale_record)
+                # Update the cached live_sales_df locally so we avoid a full-table re-read.
+                new_row = {
+                    "timestamp": sale_record["Timestamp"],
+                    "item_name": sale_record["Item"],
+                    "quantity": sale_record["Quantity"],
+                    "price_per_item": sale_record["Price per Item (₹)"],
+                    "total_sale": sale_record["Total Sale (₹)"],
+                    "channel": sale_record["Channel"],
+                    "sale_date": date.today().isoformat(),
+                    "status": "live"
+                }
+                if 'live_sales_df' in st.session_state:
+                    st.session_state.live_sales_df = pd.concat(
+                        [st.session_state.live_sales_df, pd.DataFrame([new_row])],
+                        ignore_index=True
+                    )
+                else:
+                    st.session_state.live_sales_df = pd.DataFrame([new_row])
                 st.success(f"Logged online sale of {quantity} x {selected_item}!")
                 st.rerun()
 
@@ -153,8 +198,13 @@ with col1:
             with c1:
                 if st.button("Yes, Remove It", type="primary"):
                     db.delete_sale_by_timestamp(st.session_state.sale_to_remove)
+                    # Update cached DF if present
+                    if 'live_sales_df' in st.session_state:
+                        st.session_state.live_sales_df = st.session_state.live_sales_df[
+                            st.session_state.live_sales_df['timestamp'] != st.session_state.sale_to_remove
+                        ].reset_index(drop=True)
                     st.success("Sale removed successfully from today's log.")
-                    st.session_state.confirm_remove_sale = False # Reset state
+                    st.session_state.confirm_remove_sale = False
                     st.rerun()
             with c2:
                 if st.button("Cancel"):
@@ -172,8 +222,11 @@ with col2:
         with c1:
             if st.button("Yes, Clear Everything", type="primary"):
                 db.clear_live_sales()
+                # Clear the local cache (preserve columns if possible)
+                if 'live_sales_df' in st.session_state:
+                    st.session_state.live_sales_df = st.session_state.live_sales_df.iloc[0:0].copy()
                 st.success("Cleared all of today's live sales.")
-                st.session_state.confirm_clear_log = False # Reset state
+                st.session_state.confirm_clear_log = False
                 st.rerun()
         with c2:
             if st.button("Cancel##"): # Use "##" to create a unique key for this button
@@ -195,11 +248,14 @@ if st.session_state.confirm_end_day:
     with c1:
         if st.button("Yes, End the Day", type="primary"):
             db.archive_live_sales()
+            # Clear local cache of live sales (they are now archived)
+            if 'live_sales_df' in st.session_state:
+                st.session_state.live_sales_df = st.session_state.live_sales_df.iloc[0:0].copy()
             st.balloons()
             st.success(f"Successfully saved all sales for {date.today().isoformat()} to your permanent record!")
-            st.session_state.confirm_end_day = False # Reset state
+            st.session_state.confirm_end_day = False
             st.rerun()
-    with c2:
-        if st.button("Cancel###"): # Use "###" to create a unique key
-            st.session_state.confirm_end_day = False # Reset state
-            st.rerun()
+with c2:
+    if st.button("Cancel###"): # Use "###" to create a unique key
+        st.session_state.confirm_end_day = False # Reset state
+        st.rerun()

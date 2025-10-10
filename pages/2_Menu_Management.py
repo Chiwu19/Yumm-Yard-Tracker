@@ -22,9 +22,13 @@ st.markdown("Add, view, and remove menu items. You can also manage your permanen
 st.header("Menu Management")
 col1, col2 = st.columns(2)
 
-# Load menus from the database
-offline_menu = db.get_menu('Offline')
-online_menu = db.get_menu('Online')
+# Load menus into a session_state cache so the menu isn't refetched on every rerun.
+# It will be loaded from the DB once per app session (or when the app is fully refreshed).
+if 'menus' not in st.session_state:
+    st.session_state.menus = db.get_menus()
+menus = st.session_state.menus
+offline_menu = menus.get('Offline', {})
+online_menu = menus.get('Online', {})
 
 with col1:
     st.subheader("Offline Menu (In-Store)")
@@ -35,6 +39,8 @@ with col1:
         if st.form_submit_button("Add to Offline Menu"):
             if item_name:
                 db.add_menu_item(item_name, item_price, 'Offline')
+                # Update the in-memory menu cache so other pages (or this page) see the change
+                st.session_state.menus.setdefault('Offline', {})[item_name] = item_price
                 st.success(f"Added '{item_name}' to Offline Menu.")
                 st.rerun()
     
@@ -49,6 +55,9 @@ with col1:
         item_to_remove_offline = st.selectbox("Select item to remove", options=list(offline_menu.keys()), key="offline_item_remove")
         if st.button("Remove from Offline Menu", type="primary"):
             db.delete_menu_item(item_to_remove_offline, 'Offline')
+            # Update the in-memory cache
+            if 'menus' in st.session_state and 'Offline' in st.session_state.menus:
+                st.session_state.menus['Offline'].pop(item_to_remove_offline, None)
             st.success(f"Removed '{item_to_remove_offline}' from Offline Menu.")
             st.rerun()
     else:
@@ -63,6 +72,8 @@ with col2:
         if st.form_submit_button("Add to Online Menu"):
             if item_name:
                 db.add_menu_item(item_name, item_price, 'Online')
+                # Update the in-memory menu cache
+                st.session_state.menus.setdefault('Online', {})[item_name] = item_price
                 st.success(f"Added '{item_name}' to Online Menu.")
                 st.rerun()
 
@@ -77,6 +88,9 @@ with col2:
         item_to_remove_online = st.selectbox("Select item to remove", options=list(online_menu.keys()), key="online_item_remove")
         if st.button("Remove from Online Menu", type="primary"):
             db.delete_menu_item(item_to_remove_online, 'Online')
+            # Update the in-memory cache
+            if 'menus' in st.session_state and 'Online' in st.session_state.menus:
+                st.session_state.menus['Online'].pop(item_to_remove_online, None)
             st.success(f"Removed '{item_to_remove_online}' from Online Menu.")
             st.rerun()
     else:
