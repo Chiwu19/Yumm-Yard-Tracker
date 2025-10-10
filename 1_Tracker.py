@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import date
 import database as db  # Import the new database module
 
+
 # Initialize the database and its tables
 db.init_db()
 
