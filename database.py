@@ -68,6 +68,28 @@ def get_menu(channel):
     # shared global connection - do not close here
     return dict(zip(df.item_name, df.price))
 
+def get_menus():
+    """Retrieves both Offline and Online menus in a single query.
+    Returns a dict: {'Offline': {item: price, ...}, 'Online': {...}}
+    """
+    conn = connect_db()
+    query = "SELECT item_name, price, channel FROM menus WHERE channel IN ('Offline','Online') ORDER BY channel, item_name"
+    df = pd.read_sql_query(query, conn)
+    menus = {}
+    if not df.empty:
+        # Build dictionary grouped by channel
+        for _, row in df.iterrows():
+            ch = row['channel']
+            item = row['item_name']
+            price = row['price']
+            if ch not in menus:
+                menus[ch] = {}
+            menus[ch][item] = price
+    # Ensure keys exist even if empty
+    menus.setdefault('Offline', {})
+    menus.setdefault('Online', {})
+    return menus
+
 def add_menu_item(item_name, price, channel):
     """Adds or updates an item in a menu."""
     conn = connect_db()
