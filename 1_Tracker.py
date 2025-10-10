@@ -1,8 +1,4 @@
 # 1_Tracker.py
-
-import nest_asyncio
-nest_asyncio.apply()
-
 import streamlit as st
 import pandas as pd
 from datetime import date

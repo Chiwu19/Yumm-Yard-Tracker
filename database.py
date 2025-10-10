@@ -4,6 +4,9 @@ from datetime import date
 import streamlit as st
 import libsql_client
 
+import nest_asyncio
+nest_asyncio.apply()
+
 # --- NEW: Cached Database Connection ---
 @st.cache_resource
 def get_db_connection():
