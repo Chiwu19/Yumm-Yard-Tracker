@@ -104,6 +104,17 @@ def get_sales(status='live', channel=None, start_date=None, end_date=None):
     df = pd.DataFrame(rs.rows, columns=columns)
     return df
 
+def get_live_revenue(channel):
+    """Calculates the sum of 'live' sales for a specific channel directly in the DB."""
+    conn = get_db_connection()
+    rs = conn.execute(
+        "SELECT SUM(total_sale) FROM sales WHERE status = 'live' AND channel = ?",
+        (channel,)
+    )
+    # The result might be None if there are no sales, so we handle that.
+    total = rs.rows[0][0]
+    return total if total is not None else 0.0
+
 def delete_sale_by_timestamp(timestamp):
     """Deletes a single sale using its unique timestamp."""
     conn = get_db_connection()
@@ -129,3 +140,4 @@ def delete_archived_sales_by_date(date_str):
     """Permanently deletes all archived sales for a specific date."""
     conn = get_db_connection()
     conn.execute("DELETE FROM sales WHERE status = 'archived' AND sale_date = ?", (date_str,))
+
