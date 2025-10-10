@@ -1,4 +1,4 @@
 streamlit
 pandas
 plotly-express
-libsql
+libsql-client
