@@ -44,9 +44,11 @@ st.markdown("---")
 # --- Today's Live Sales Summary ---
 st.header("Today's Revenue")
 
-# Fetch live sales data directly from the database
-todays_offline_df = db.get_sales(status='live', channel='Offline')
-todays_online_df = db.get_sales(status='live', channel='Online')
+# Fetch live sales data directly from the database (single call)
+live_sales_df = db.get_sales(status='live')
+# Split into channels in-memory to avoid multiple DB queries
+todays_offline_df = live_sales_df[live_sales_df['channel'] == 'Offline'].copy()
+todays_online_df = live_sales_df[live_sales_df['channel'] == 'Online'].copy()
 
 live_offline_total = todays_offline_df["total_sale"].sum()
 live_online_total = todays_online_df["total_sale"].sum()
@@ -62,9 +64,10 @@ st.markdown("---")
 # --- Tabs for Offline and Online Sales ---
 offline_tab, online_tab = st.tabs(["🛒 Offline Sales", "🛵 Online Sales"])
 
-# Load menus once
-offline_menu = db.get_menu('Offline')
-online_menu = db.get_menu('Online')
+# Load menus once (single DB call)
+menus = db.get_menus()
+offline_menu = menus.get('Offline', {})
+online_menu = menus.get('Online', {})
 
 with offline_tab:
     st.header("Log a New Offline Sale")
