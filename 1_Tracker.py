@@ -255,7 +255,7 @@ if st.session_state.confirm_end_day:
             st.success(f"Successfully saved all sales for {date.today().isoformat()} to your permanent record!")
             st.session_state.confirm_end_day = False
             st.rerun()
-with c2:
-    if st.button("Cancel###"): # Use "###" to create a unique key
-        st.session_state.confirm_end_day = False # Reset state
-        st.rerun()
+    with c2:
+        if st.button("Cancel###"): # Use "###" to create a unique key
+            st.session_state.confirm_end_day = False # Reset state
+            st.rerun()
