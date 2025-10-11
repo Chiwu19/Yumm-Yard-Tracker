@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+import re
 import database as db  # Import the new database module
 
 
@@ -43,11 +44,6 @@ def display_sales_section(sales_df, section_title):
         st.dataframe(display_df[cols])
 
 # --- App Title & Main Metrics ---
-st.title("Yumm Yard Daily Sales Tracker 📈")
-st.markdown("---")
-
-# --- Today's Live Sales Summary ---
-st.header("Today's Revenue")
 
 # Use cached live sales in session_state so we don't refetch the entire table on every small action.
 # The first run will load from the DB; subsequent interactions will update the in-memory copy.
@@ -58,17 +54,6 @@ live_sales_df = st.session_state.live_sales_df
 # Split into channels in-memory to avoid multiple DB queries
 todays_offline_df = live_sales_df[live_sales_df['channel'] == 'Offline'].copy()
 todays_online_df = live_sales_df[live_sales_df['channel'] == 'Online'].copy()
-
-live_offline_total = todays_offline_df["total_sale"].sum()
-live_online_total = todays_online_df["total_sale"].sum()
-live_grand_total = live_offline_total + live_online_total
-
-col1, col2, col3 = st.columns(3)
-col1.metric("Offline Revenue", f"₹{live_offline_total:.2f}")
-col2.metric("Online Revenue", f"₹{live_online_total:.2f}")
-col3.metric("Grand Total", f"₹{live_grand_total:.2f}")
-
-st.markdown("---")
 
 # --- Tabs for Offline and Online Sales ---
 offline_tab, online_tab = st.tabs(["🛒 Offline Sales", "🛵 Online Sales"])
@@ -82,7 +67,7 @@ offline_menu = menus.get('Offline', {})
 online_menu = menus.get('Online', {})
 
 with offline_tab:
-    st.header("Point-of-Sale: Offline Menu")
+    st.header("Log a New Offline Sale")
     if not offline_menu:
         st.warning("Please add items to the Offline Menu on the 'Menu Management' page first.")
     else:
@@ -90,20 +75,45 @@ with offline_tab:
         menu_col, order_col = st.columns([2, 1])
         with menu_col:
             st.subheader("Menu")
-            for item, price in offline_menu.items():
-                # Create a single-row layout for each menu item with small action buttons
-                a, b, c, d = st.columns([4, 1, 1, 1])
-                a.write(f"**{item}**")
-                b.write(f"₹{price:.2f}")
-                # + button: increment quantity in the in-memory order
-                if c.button("+", key=f"offline_plus_{item}"):
-                    st.session_state.current_order_offline[item] = st.session_state.current_order_offline.get(item, 0) + 1
-                    st.rerun()
-                # x button: remove item from the in-memory order entirely
-                if d.button("x", key=f"offline_remove_{item}"):
-                    if item in st.session_state.current_order_offline:
-                        st.session_state.current_order_offline.pop(item, None)
+            # Add search box to quickly filter long offline menus
+            search_offline = st.text_input("Search items...", key="offline_menu_search")
+            # Build filtered view (case-insensitive substring match)
+            if search_offline:
+                filtered_offline_menu = {
+                    item: price for item, price in offline_menu.items()
+                    if search_offline.lower() in item.lower()
+                }
+            else:
+                # By default show only the top 5 most common items (by historical sales)
+                try:
+                    top_items = db.get_top_items('Offline', 5)
+                except Exception:
+                    top_items = []
+                if top_items:
+                    filtered_offline_menu = {item: offline_menu[item] for item in top_items if item in offline_menu}
+                else:
+                    # No sales history yet — show first five items to avoid an empty list
+                    first_items = list(offline_menu.items())[:5]
+                    filtered_offline_menu = dict(first_items)
+                st.info("Showing top 5 items by default. Use the search box to find other items.")
+            if not filtered_offline_menu:
+                st.info("No menu items match your search.")
+            else:
+                for item, price in filtered_offline_menu.items():
+                    # Create a single-row layout for each menu item with small action buttons
+                    a, b, c, d = st.columns([4, 1, 1, 1])
+                    display_name = re.sub(r'^\*{1,2}\s*(.*?)\s*\*{1,2}$', r'\1', item).strip()
+                    a.markdown(f"**{display_name}**")
+                    b.write(f"₹{price:.2f}")
+                    # + button: increment quantity in the in-memory order
+                    if c.button("＋", key=f"offline_plus_{item}"):
+                        st.session_state.current_order_offline[item] = st.session_state.current_order_offline.get(item, 0) + 1
                         st.rerun()
+                    # × button: remove item from the in-memory order entirely
+                    if d.button("×", key=f"offline_remove_{item}"):
+                        if item in st.session_state.current_order_offline:
+                            st.session_state.current_order_offline.pop(item, None)
+                            st.rerun()
         with order_col:
             st.subheader("Order Summary")
             order = st.session_state.current_order_offline
@@ -118,11 +128,9 @@ with offline_tab:
                     r1, r2, r3 = st.columns([3, 1, 1])
                     r1.write(f"{itm} (x{qty})")
                     r2.write(f"₹{line_total:.2f}")
-                    # allow decrement
-                    if r3.button("-", key=f"offline_decr_{itm}"):
-                        if qty > 1:
-                            st.session_state.current_order_offline[itm] = qty - 1
-                        else:
+                    # remove item entirely from summary (show only × icon here)
+                    if r3.button("×", key=f"offline_remove_summary_{itm}"):
+                        if itm in st.session_state.current_order_offline:
                             st.session_state.current_order_offline.pop(itm, None)
                         st.rerun()
                 st.markdown("---")
@@ -179,19 +187,41 @@ with online_tab:
         menu_col, order_col = st.columns([2, 1])
         with menu_col:
             st.subheader("Menu")
-            if not online_menu:
-                st.write("No items configured for the online menu.")
-            for item, price in online_menu.items():
-                a, b, c, d = st.columns([4, 1, 1, 1])
-                a.write(f"**{item}**")
-                b.write(f"₹{price:.2f}")
-                if c.button("+", key=f"online_plus_{item}"):
-                    st.session_state.current_order_online[item] = st.session_state.current_order_online.get(item, 0) + 1
-                    st.rerun()
-                if d.button("x", key=f"online_remove_{item}"):
-                    if item in st.session_state.current_order_online:
-                        st.session_state.current_order_online.pop(item, None)
+            # Add search box to quickly filter long online menus
+            search_online = st.text_input("Search items...", key="online_menu_search")
+            if search_online:
+                filtered_online_menu = {
+                    item: price for item, price in online_menu.items()
+                    if search_online.lower() in item.lower()
+                }
+            else:
+                # By default show only the top 5 most common items (by historical sales)
+                try:
+                    top_items = db.get_top_items('Online', 5)
+                except Exception:
+                    top_items = []
+                if top_items:
+                    filtered_online_menu = {item: online_menu[item] for item in top_items if item in online_menu}
+                else:
+                    # No sales history yet — show first five items to avoid an empty list
+                    first_items = list(online_menu.items())[:5]
+                    filtered_online_menu = dict(first_items)
+                st.info("Showing top 5 items by default. Use the search box to find other items.")
+            if not filtered_online_menu:
+                st.info("No menu items match your search.")
+            else:
+                for item, price in filtered_online_menu.items():
+                    a, b, c, d = st.columns([4, 1, 1, 1])
+                    display_name = re.sub(r'^\*{1,2}\s*(.*?)\s*\*{1,2}$', r'\1', item).strip()
+                    a.markdown(f"**{display_name}**")
+                    b.write(f"₹{price:.2f}")
+                    if c.button("＋", key=f"online_plus_{item}"):
+                        st.session_state.current_order_online[item] = st.session_state.current_order_online.get(item, 0) + 1
                         st.rerun()
+                    if d.button("×", key=f"online_remove_{item}"):
+                        if item in st.session_state.current_order_online:
+                            st.session_state.current_order_online.pop(item, None)
+                            st.rerun()
         with order_col:
             st.subheader("Order Summary")
             order = st.session_state.current_order_online
@@ -206,10 +236,9 @@ with online_tab:
                     r1, r2, r3 = st.columns([3, 1, 1])
                     r1.write(f"{itm} (x{qty})")
                     r2.write(f"₹{line_total:.2f}")
-                    if r3.button("-", key=f"online_decr_{itm}"):
-                        if qty > 1:
-                            st.session_state.current_order_online[itm] = qty - 1
-                        else:
+                    # remove item entirely from summary (show only × icon here)
+                    if r3.button("×", key=f"online_remove_summary_{itm}"):
+                        if itm in st.session_state.current_order_online:
                             st.session_state.current_order_online.pop(itm, None)
                         st.rerun()
                 st.markdown("---")
@@ -260,7 +289,6 @@ st.markdown("---")
 
 # --- Today's Live Management Section ---
 st.header("Manage Today's Sales")
-st.markdown("Use these tools to correct mistakes in today's log before saving.")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -322,6 +350,34 @@ with col2:
             if st.button("Cancel##"): # Use "##" to create a unique key for this button
                 st.session_state.confirm_clear_log = False # Reset state
                 st.rerun()
+
+st.markdown("---")
+
+# --- Today's Revenue Summary (placed before End of Day) ---
+st.subheader("Today's Revenue Summary")
+
+# Ensure we have the live sales cached
+if 'live_sales_df' not in st.session_state:
+    st.session_state.live_sales_df = db.get_sales(status='live')
+live_sales_df = st.session_state.live_sales_df
+
+# Safely compute per-channel totals even if the DataFrame is empty or missing expected columns
+if live_sales_df is None or live_sales_df.empty:
+    live_offline_total = 0.0
+    live_online_total = 0.0
+else:
+    todays_offline_df = live_sales_df[live_sales_df.get('channel') == 'Offline'].copy()
+    todays_online_df = live_sales_df[live_sales_df.get('channel') == 'Online'].copy()
+    live_offline_total = todays_offline_df["total_sale"].sum() if not todays_offline_df.empty and "total_sale" in todays_offline_df.columns else 0.0
+    live_online_total = todays_online_df["total_sale"].sum() if not todays_online_df.empty and "total_sale" in todays_online_df.columns else 0.0
+
+live_grand_total = live_offline_total + live_online_total
+
+# Display the three summary metrics with Grand Total emphasized
+col1, col2, col3 = st.columns(3)
+col1.metric("Offline Revenue", f"₹{live_offline_total:.2f}")
+col2.metric("Online Revenue", f"₹{live_online_total:.2f}")
+col3.metric("Grand Total", f"₹{live_grand_total:.2f}")
 
 st.markdown("---")
 

@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+import re
 import database as db # Import the new database module
 
 # Initialize the database and its tables
@@ -14,9 +15,6 @@ if 'date_to_delete' not in st.session_state:
     st.session_state.date_to_delete = None
 
 st.set_page_config(page_title="Menu Management", page_icon="📋", layout="wide")
-
-st.title("Menu & Data Management 📋")
-st.markdown("Add, view, and remove menu items. You can also manage your permanent historical sales records here.")
 
 # --- Menu Management Section ---
 st.header("Menu Management")
@@ -38,17 +36,23 @@ with col1:
         item_price = st.number_input("Price (₹)", min_value=0.0, format="%.2f", key="offline_price_add")
         if st.form_submit_button("Add to Offline Menu"):
             if item_name:
-                db.add_menu_item(item_name, item_price, 'Offline')
+                # sanitize incoming name to strip markdown emphasis characters so UI rendering stays consistent
+                clean_name = item_name.strip()
+                m = re.match(r'^\*{1,2}\s*(.*?)\s*\*{1,2}$', clean_name)
+                if m:
+                    clean_name = m.group(1)
+                db.add_menu_item(clean_name, item_price, 'Offline')
                 # Update the in-memory menu cache so other pages (or this page) see the change
-                st.session_state.menus.setdefault('Offline', {})[item_name] = item_price
-                st.success(f"Added '{item_name}' to Offline Menu.")
+                st.session_state.menus.setdefault('Offline', {})[clean_name] = item_price
+                st.success(f"Added '{clean_name}' to Offline Menu.")
                 st.rerun()
     
     if offline_menu:
         st.write("---")
         st.write("**Current Offline Menu**")
         for item, price in offline_menu.items():
-            st.write(f"- {item}: ₹{price:.2f}")
+            display_name = item.strip('*').strip()
+            st.markdown(f"- **{display_name}**: ₹{price:.2f}")
         
         st.write("---")
         st.write("**Remove Item**")
@@ -71,17 +75,23 @@ with col2:
         item_price = st.number_input("Price (₹)", min_value=0.0, format="%.2f", key="online_price_add")
         if st.form_submit_button("Add to Online Menu"):
             if item_name:
-                db.add_menu_item(item_name, item_price, 'Online')
+                # sanitize incoming name to strip markdown emphasis characters so UI rendering stays consistent
+                clean_name = item_name.strip()
+                m = re.match(r'^\*{1,2}\s*(.*?)\s*\*{1,2}$', clean_name)
+                if m:
+                    clean_name = m.group(1)
+                db.add_menu_item(clean_name, item_price, 'Online')
                 # Update the in-memory menu cache
-                st.session_state.menus.setdefault('Online', {})[item_name] = item_price
-                st.success(f"Added '{item_name}' to Online Menu.")
+                st.session_state.menus.setdefault('Online', {})[clean_name] = item_price
+                st.success(f"Added '{clean_name}' to Online Menu.")
                 st.rerun()
 
     if online_menu:
         st.write("---")
         st.write("**Current Online Menu**")
         for item, price in online_menu.items():
-            st.write(f"- {item}: ₹{price:.2f}")
+            display_name = item.strip('*').strip()
+            st.markdown(f"- **{display_name}**: ₹{price:.2f}")
 
         st.write("---")
         st.write("**Remove Item**")

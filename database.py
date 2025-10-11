@@ -90,6 +90,70 @@ def get_menus():
     menus.setdefault('Online', {})
     return menus
 
+def get_top_items(channel, limit=5, metric='orders'):
+    """
+    Return a list of the top `limit` items for a given channel.
+
+    Metrics:
+    - 'orders' (default): rank by number of times an item was ordered (COUNT of sales rows).
+      This reflects "most reordered / best sellers" — how many separate sale entries included the item.
+    - 'quantity': rank by total quantity sold (SUM of quantity).
+
+    Returns an empty list when there is no sales data.
+    """
+    conn = connect_db()
+    metric = (metric or 'orders').lower()
+
+    if metric == 'quantity':
+        # Rank by total quantity sold
+        query = """
+        SELECT item_name, SUM(quantity) as score
+        FROM sales
+        WHERE channel = ?
+        GROUP BY item_name
+        ORDER BY score DESC
+        LIMIT ?
+        """
+        params = (channel, limit)
+    else:
+        # Default: rank by number of orders (count of rows for the item)
+        query = """
+        SELECT item_name, COUNT(*) as score
+        FROM sales
+        WHERE channel = ?
+        GROUP BY item_name
+        ORDER BY score DESC
+        LIMIT ?
+        """
+        params = (channel, limit)
+
+    try:
+        df = pd.read_sql_query(query, conn, params=params)
+    except Exception:
+        # Fallback when parametrized LIMIT isn't supported by the driver
+        if metric == 'quantity':
+            df = pd.read_sql_query("""
+            SELECT item_name, SUM(quantity) as score
+            FROM sales
+            WHERE channel = ?
+            GROUP BY item_name
+            ORDER BY score DESC
+            """, conn, params=(channel,))
+        else:
+            df = pd.read_sql_query("""
+            SELECT item_name, COUNT(*) as score
+            FROM sales
+            WHERE channel = ?
+            GROUP BY item_name
+            ORDER BY score DESC
+            """, conn, params=(channel,))
+        df = df.head(limit)
+
+    # shared global connection - do not close here
+    if df.empty:
+        return []
+    return df['item_name'].tolist()
+
 def add_menu_item(item_name, price, channel):
     """Adds or updates an item in a menu."""
     conn = connect_db()

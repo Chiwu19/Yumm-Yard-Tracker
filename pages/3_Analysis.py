@@ -9,7 +9,6 @@ import database as db # Import the new database module
 db.init_db()
 
 st.set_page_config(page_title="Historical Analysis", page_icon="📊", layout="wide")
-st.title("Historical Sales Analysis 📊")
 
 available_dates_str = db.get_archived_dates()
 
