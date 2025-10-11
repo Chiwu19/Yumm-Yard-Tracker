@@ -19,6 +19,11 @@ if 'confirm_end_day' not in st.session_state:
     st.session_state.confirm_end_day = False
 if 'sale_to_remove' not in st.session_state:
     st.session_state.sale_to_remove = None
+# Temporary in-memory orders for the POS-style UI (one per channel)
+if 'current_order_offline' not in st.session_state:
+    st.session_state.current_order_offline = {}
+if 'current_order_online' not in st.session_state:
+    st.session_state.current_order_online = {}
 
 
 def display_sales_section(sales_df, section_title):
@@ -77,46 +82,90 @@ offline_menu = menus.get('Offline', {})
 online_menu = menus.get('Online', {})
 
 with offline_tab:
-    st.header("Log a New Offline Sale")
+    st.header("Point-of-Sale: Offline Menu")
     if not offline_menu:
         st.warning("Please add items to the Offline Menu on the 'Menu Management' page first.")
     else:
-        with st.form("offline_sale_form", clear_on_submit=True):
-            selected_item = st.selectbox("Select Item", options=list(offline_menu.keys()), key="offline_select")
-            quantity = st.number_input("Quantity", min_value=1, value=1, key="offline_qty")
-            
-            if st.form_submit_button("Log Offline Sale"):
-                price = offline_menu[selected_item]
-                sale_record = {
-                    "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
-                    "Item": selected_item,
-                    "Quantity": quantity,
-                    "Price per Item (₹)": price,
-                    "Total Sale (₹)": price * quantity,
-                    "Channel": "Offline"
-                }
-                # Persist to DB
-                db.log_sale(sale_record)
-                # Update the cached live_sales_df locally so we avoid a full-table re-read.
-                new_row = {
-                    "timestamp": sale_record["Timestamp"],
-                    "item_name": sale_record["Item"],
-                    "quantity": sale_record["Quantity"],
-                    "price_per_item": sale_record["Price per Item (₹)"],
-                    "total_sale": sale_record["Total Sale (₹)"],
-                    "channel": sale_record["Channel"],
-                    "sale_date": date.today().isoformat(),
-                    "status": "live"
-                }
-                if 'live_sales_df' in st.session_state:
-                    st.session_state.live_sales_df = pd.concat(
-                        [st.session_state.live_sales_df, pd.DataFrame([new_row])],
-                        ignore_index=True
-                    )
-                else:
-                    st.session_state.live_sales_df = pd.DataFrame([new_row])
-                st.success(f"Logged offline sale of {quantity} x {selected_item}!")
-                st.rerun()
+        # Layout: left = menu with + / x controls, right = current order summary
+        menu_col, order_col = st.columns([2, 1])
+        with menu_col:
+            st.subheader("Menu")
+            for item, price in offline_menu.items():
+                # Create a single-row layout for each menu item with small action buttons
+                a, b, c, d = st.columns([4, 1, 1, 1])
+                a.write(f"**{item}**")
+                b.write(f"₹{price:.2f}")
+                # + button: increment quantity in the in-memory order
+                if c.button("+", key=f"offline_plus_{item}"):
+                    st.session_state.current_order_offline[item] = st.session_state.current_order_offline.get(item, 0) + 1
+                    st.rerun()
+                # x button: remove item from the in-memory order entirely
+                if d.button("x", key=f"offline_remove_{item}"):
+                    if item in st.session_state.current_order_offline:
+                        st.session_state.current_order_offline.pop(item, None)
+                        st.rerun()
+        with order_col:
+            st.subheader("Order Summary")
+            order = st.session_state.current_order_offline
+            if not order:
+                st.write("No items in the current order.")
+            else:
+                subtotal = 0.0
+                for itm, qty in list(order.items()):
+                    price = offline_menu.get(itm, 0.0)
+                    line_total = price * qty
+                    subtotal += line_total
+                    r1, r2, r3 = st.columns([3, 1, 1])
+                    r1.write(f"{itm} (x{qty})")
+                    r2.write(f"₹{line_total:.2f}")
+                    # allow decrement
+                    if r3.button("-", key=f"offline_decr_{itm}"):
+                        if qty > 1:
+                            st.session_state.current_order_offline[itm] = qty - 1
+                        else:
+                            st.session_state.current_order_offline.pop(itm, None)
+                        st.rerun()
+                st.markdown("---")
+                st.write(f"**SUBTOTAL:** ₹{subtotal:.2f}")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Clear Order", key="offline_clear_order"):
+                        st.session_state.current_order_offline = {}
+                        st.rerun()
+                with c2:
+                    if st.button("Log Order", key="offline_log_order", type="primary"):
+                        # Persist each line as its own sale row
+                        for itm, qty in list(order.items()):
+                            price = offline_menu.get(itm, 0.0)
+                            sale_record = {
+                                "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+                                "Item": itm,
+                                "Quantity": qty,
+                                "Price per Item (₹)": price,
+                                "Total Sale (₹)": price * qty,
+                                "Channel": "Offline"
+                            }
+                            db.log_sale(sale_record)
+                            new_row = {
+                                "timestamp": sale_record["Timestamp"],
+                                "item_name": sale_record["Item"],
+                                "quantity": sale_record["Quantity"],
+                                "price_per_item": sale_record["Price per Item (₹)"],
+                                "total_sale": sale_record["Total Sale (₹)"],
+                                "channel": sale_record["Channel"],
+                                "sale_date": date.today().isoformat(),
+                                "status": "live"
+                            }
+                            if 'live_sales_df' in st.session_state:
+                                st.session_state.live_sales_df = pd.concat(
+                                    [st.session_state.live_sales_df, pd.DataFrame([new_row])],
+                                    ignore_index=True
+                                )
+                            else:
+                                st.session_state.live_sales_df = pd.DataFrame([new_row])
+                        st.success("Logged current order to today's sales.")
+                        st.session_state.current_order_offline = {}
+                        st.rerun()
 
     st.header("Today's Offline Sales")
     display_sales_section(todays_offline_df, "Offline")
@@ -126,42 +175,83 @@ with online_tab:
     if not online_menu:
         st.warning("Please add items to the Online Menu on the 'Menu Management' page first.")
     else:
-        with st.form("online_sale_form", clear_on_submit=True):
-            selected_item = st.selectbox("Select Item", options=list(online_menu.keys()), key="online_select")
-            quantity = st.number_input("Quantity", min_value=1, value=1, key="online_qty")
-            
-            if st.form_submit_button("Log Online Sale"):
-                price = online_menu[selected_item]
-                sale_record = {
-                    "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
-                    "Item": selected_item,
-                    "Quantity": quantity,
-                    "Price per Item (₹)": price,
-                    "Total Sale (₹)": price * quantity,
-                    "Channel": "Online"
-                }
-                # Persist to DB
-                db.log_sale(sale_record)
-                # Update the cached live_sales_df locally so we avoid a full-table re-read.
-                new_row = {
-                    "timestamp": sale_record["Timestamp"],
-                    "item_name": sale_record["Item"],
-                    "quantity": sale_record["Quantity"],
-                    "price_per_item": sale_record["Price per Item (₹)"],
-                    "total_sale": sale_record["Total Sale (₹)"],
-                    "channel": sale_record["Channel"],
-                    "sale_date": date.today().isoformat(),
-                    "status": "live"
-                }
-                if 'live_sales_df' in st.session_state:
-                    st.session_state.live_sales_df = pd.concat(
-                        [st.session_state.live_sales_df, pd.DataFrame([new_row])],
-                        ignore_index=True
-                    )
-                else:
-                    st.session_state.live_sales_df = pd.DataFrame([new_row])
-                st.success(f"Logged online sale of {quantity} x {selected_item}!")
-                st.rerun()
+        # POS-style UI for Online menu
+        menu_col, order_col = st.columns([2, 1])
+        with menu_col:
+            st.subheader("Menu")
+            if not online_menu:
+                st.write("No items configured for the online menu.")
+            for item, price in online_menu.items():
+                a, b, c, d = st.columns([4, 1, 1, 1])
+                a.write(f"**{item}**")
+                b.write(f"₹{price:.2f}")
+                if c.button("+", key=f"online_plus_{item}"):
+                    st.session_state.current_order_online[item] = st.session_state.current_order_online.get(item, 0) + 1
+                    st.rerun()
+                if d.button("x", key=f"online_remove_{item}"):
+                    if item in st.session_state.current_order_online:
+                        st.session_state.current_order_online.pop(item, None)
+                        st.rerun()
+        with order_col:
+            st.subheader("Order Summary")
+            order = st.session_state.current_order_online
+            if not order:
+                st.write("No items in the current order.")
+            else:
+                subtotal = 0.0
+                for itm, qty in list(order.items()):
+                    price = online_menu.get(itm, 0.0)
+                    line_total = price * qty
+                    subtotal += line_total
+                    r1, r2, r3 = st.columns([3, 1, 1])
+                    r1.write(f"{itm} (x{qty})")
+                    r2.write(f"₹{line_total:.2f}")
+                    if r3.button("-", key=f"online_decr_{itm}"):
+                        if qty > 1:
+                            st.session_state.current_order_online[itm] = qty - 1
+                        else:
+                            st.session_state.current_order_online.pop(itm, None)
+                        st.rerun()
+                st.markdown("---")
+                st.write(f"**SUBTOTAL:** ₹{subtotal:.2f}")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Clear Order", key="online_clear_order"):
+                        st.session_state.current_order_online = {}
+                        st.rerun()
+                with c2:
+                    if st.button("Log Order", key="online_log_order", type="primary"):
+                        for itm, qty in list(order.items()):
+                            price = online_menu.get(itm, 0.0)
+                            sale_record = {
+                                "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+                                "Item": itm,
+                                "Quantity": qty,
+                                "Price per Item (₹)": price,
+                                "Total Sale (₹)": price * qty,
+                                "Channel": "Online"
+                            }
+                            db.log_sale(sale_record)
+                            new_row = {
+                                "timestamp": sale_record["Timestamp"],
+                                "item_name": sale_record["Item"],
+                                "quantity": sale_record["Quantity"],
+                                "price_per_item": sale_record["Price per Item (₹)"],
+                                "total_sale": sale_record["Total Sale (₹)"],
+                                "channel": sale_record["Channel"],
+                                "sale_date": date.today().isoformat(),
+                                "status": "live"
+                            }
+                            if 'live_sales_df' in st.session_state:
+                                st.session_state.live_sales_df = pd.concat(
+                                    [st.session_state.live_sales_df, pd.DataFrame([new_row])],
+                                    ignore_index=True
+                                )
+                            else:
+                                st.session_state.live_sales_df = pd.DataFrame([new_row])
+                        st.success("Logged current order to today's sales.")
+                        st.session_state.current_order_online = {}
+                        st.rerun()
 
     st.header("Today's Online Sales")
     display_sales_section(todays_online_df, "Online")
