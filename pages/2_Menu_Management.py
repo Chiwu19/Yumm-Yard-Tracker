@@ -139,6 +139,16 @@ else:
         else:
             st.write("No online sales were recorded for this day.")
 
+        # --- Daily totals (per-channel + grand total) (placed below the tables) ---
+        offline_total = offline_sales_df["total_sale"].sum() if (not offline_sales_df.empty and "total_sale" in offline_sales_df.columns) else 0.0
+        online_total = online_sales_df["total_sale"].sum() if (not online_sales_df.empty and "total_sale" in online_sales_df.columns) else 0.0
+        grand_total = offline_total + online_total
+
+        tcol1, tcol2, tcol3 = st.columns([1,1,1])
+        tcol1.metric("Offline Revenue", f"₹{offline_total:.2f}")
+        tcol2.metric("Online Revenue", f"₹{online_total:.2f}")
+        tcol3.metric("Grand Total", f"₹{grand_total:.2f}")
+
         st.write("---")
         st.subheader(f"Danger Zone")
         if st.button(f"Permanently Delete All Sales for {date_to_view}", type="primary"):
