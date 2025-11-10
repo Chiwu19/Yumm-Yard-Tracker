@@ -60,10 +60,23 @@ else:
 
         total_revenue = df["total_sale"].sum()
         total_items_sold = df["quantity"].sum()
-        
-        col1, col2 = st.columns(2)
+        # Compute total expenses for the selected range (archived)
+        try:
+            expenses_df_range = db.get_expenses(status='archived')
+            expenses_df_range['Date'] = pd.to_datetime(expenses_df_range['expense_date'])
+            if start_date and end_date:
+                mask = (expenses_df_range['Date'].dt.date >= start_date) & (expenses_df_range['Date'].dt.date <= end_date)
+                expenses_df_range = expenses_df_range[mask]
+            total_expenses = expenses_df_range['amount'].sum() if not expenses_df_range.empty and 'amount' in expenses_df_range.columns else 0.0
+        except Exception:
+            total_expenses = 0.0
+
+        total_profit = total_revenue - total_expenses
+
+        col1, col2, col3 = st.columns(3)
         col1.metric("Grand Total Revenue", f"₹{total_revenue:.2f}")
         col2.metric("Total Items Sold", f"{total_items_sold}")
+        col3.metric("Total Profit", f"₹{total_profit:.2f}")
         
         st.subheader("Revenue Over Time")
         
@@ -87,7 +100,35 @@ else:
             labels={'total_sale': 'Total Revenue (₹)'}
         )
         st.plotly_chart(fig_line, use_container_width=True)
-        
+
+        # --- Profit over time (same grouping as revenue) ---
+        try:
+            expenses_df_range = db.get_expenses(status='archived')
+            expenses_df_range['Date'] = pd.to_datetime(expenses_df_range['expense_date'])
+            if start_date and end_date:
+                mask = (expenses_df_range['Date'].dt.date >= start_date) & (expenses_df_range['Date'].dt.date <= end_date)
+                expenses_df_range = expenses_df_range[mask]
+            expenses_over_time = expenses_df_range.set_index('Date').resample(period_char)['amount'].sum().reset_index()
+
+            # Align revenue and expenses by Date and compute profit
+            revenue_over_time = revenue_over_time.rename(columns={'total_sale': 'revenue'})
+            profit_over_time = revenue_over_time.merge(expenses_over_time, on='Date', how='left').rename(columns={'amount': 'expenses'})
+            profit_over_time['expenses'] = profit_over_time['expenses'].fillna(0.0)
+            profit_over_time['profit'] = profit_over_time['revenue'] - profit_over_time['expenses']
+
+            fig_profit = px.line(
+                profit_over_time,
+                x='Date',
+                y='profit',
+                title=f'{period_name} Profit Trend',
+                markers=True,
+                labels={'profit': 'Profit (₹)'}
+            )
+            st.plotly_chart(fig_profit, use_container_width=True)
+        except Exception:
+            # If expense data isn't available, skip the profit chart silently
+            pass
+
         st.markdown("---")
         
         col1, col2 = st.columns(2)

@@ -18,7 +18,7 @@ st.set_page_config(page_title="Menu Management", page_icon="📋", layout="wide"
 
 # --- Menu Management Section ---
 st.header("Menu Management")
-col1, col2 = st.columns(2)
+col = st.container()
 
 # Load menus into a session_state cache so the menu isn't refetched on every rerun.
 # It will be loaded from the DB once per app session (or when the app is fully refreshed).
@@ -26,15 +26,14 @@ if 'menus' not in st.session_state:
     st.session_state.menus = db.get_menus()
 menus = st.session_state.menus
 offline_menu = menus.get('Offline', {})
-online_menu = menus.get('Online', {})
 
-with col1:
-    st.subheader("Offline Menu (In-Store)")
+with col:
+    st.subheader("Menu")
     with st.form("offline_menu_form", clear_on_submit=True):
         st.write("**Add New Item**")
         item_name = st.text_input("Item Name", key="offline_item_add")
         item_price = st.number_input("Price (₹)", min_value=0.0, format="%.2f", key="offline_price_add")
-        if st.form_submit_button("Add to Offline Menu"):
+        if st.form_submit_button("Add to Menu"):
             if item_name:
                 # sanitize incoming name to strip markdown emphasis characters so UI rendering stays consistent
                 clean_name = item_name.strip()
@@ -44,12 +43,12 @@ with col1:
                 db.add_menu_item(clean_name, item_price, 'Offline')
                 # Update the in-memory menu cache so other pages (or this page) see the change
                 st.session_state.menus.setdefault('Offline', {})[clean_name] = item_price
-                st.success(f"Added '{clean_name}' to Offline Menu.")
+                st.success(f"Added '{clean_name}' to Menu.")
                 st.rerun()
     
     if offline_menu:
         st.write("---")
-        st.write("**Current Offline Menu**")
+        st.write("**Current Menu**")
         for item, price in offline_menu.items():
             display_name = item.strip('*').strip()
             st.markdown(f"- **{display_name}**: ₹{price:.2f}")
@@ -57,54 +56,17 @@ with col1:
         st.write("---")
         st.write("**Remove Item**")
         item_to_remove_offline = st.selectbox("Select item to remove", options=list(offline_menu.keys()), key="offline_item_remove")
-        if st.button("Remove from Offline Menu", type="primary"):
+        if st.button("Remove from Menu", type="primary"):
             db.delete_menu_item(item_to_remove_offline, 'Offline')
             # Update the in-memory cache
             if 'menus' in st.session_state and 'Offline' in st.session_state.menus:
                 st.session_state.menus['Offline'].pop(item_to_remove_offline, None)
-            st.success(f"Removed '{item_to_remove_offline}' from Offline Menu.")
+            st.success(f"Removed '{item_to_remove_offline}' from Menu.")
             st.rerun()
     else:
-        st.info("No items in the offline menu yet.")
+        st.info("No items in the menu yet.")
 
-with col2:
-    st.subheader("Online Menu (Zomato/Swiggy)")
-    with st.form("online_menu_form", clear_on_submit=True):
-        st.write("**Add New Item**")
-        item_name = st.text_input("Item Name", key="online_item_add")
-        item_price = st.number_input("Price (₹)", min_value=0.0, format="%.2f", key="online_price_add")
-        if st.form_submit_button("Add to Online Menu"):
-            if item_name:
-                # sanitize incoming name to strip markdown emphasis characters so UI rendering stays consistent
-                clean_name = item_name.strip()
-                m = re.match(r'^\*{1,2}\s*(.*?)\s*\*{1,2}$', clean_name)
-                if m:
-                    clean_name = m.group(1)
-                db.add_menu_item(clean_name, item_price, 'Online')
-                # Update the in-memory menu cache
-                st.session_state.menus.setdefault('Online', {})[clean_name] = item_price
-                st.success(f"Added '{clean_name}' to Online Menu.")
-                st.rerun()
-
-    if online_menu:
-        st.write("---")
-        st.write("**Current Online Menu**")
-        for item, price in online_menu.items():
-            display_name = item.strip('*').strip()
-            st.markdown(f"- **{display_name}**: ₹{price:.2f}")
-
-        st.write("---")
-        st.write("**Remove Item**")
-        item_to_remove_online = st.selectbox("Select item to remove", options=list(online_menu.keys()), key="online_item_remove")
-        if st.button("Remove from Online Menu", type="primary"):
-            db.delete_menu_item(item_to_remove_online, 'Online')
-            # Update the in-memory cache
-            if 'menus' in st.session_state and 'Online' in st.session_state.menus:
-                st.session_state.menus['Online'].pop(item_to_remove_online, None)
-            st.success(f"Removed '{item_to_remove_online}' from Online Menu.")
-            st.rerun()
-    else:
-        st.info("No items in the online menu yet.")
+# Note: online menu UI removed; the page now focuses on the single Menu (in-store)
 
 st.markdown("---")
 
@@ -113,6 +75,11 @@ st.header("Historical Data Management 💾")
 st.markdown("View and delete permanent sales records for any given day.")
 
 saved_dates = db.get_archived_dates()
+# Also fetch archived expense dates for management UI (if expenses exist)
+try:
+    saved_expense_dates = db.get_archived_dates()  # reuse same function if expenses share dates
+except Exception:
+    saved_expense_dates = []
 
 if not saved_dates:
     st.info("No historical sales have been saved yet.")
@@ -127,27 +94,39 @@ else:
         offline_sales_df = day_sales_df[day_sales_df['channel'] == 'Offline']
         online_sales_df = day_sales_df[day_sales_df['channel'] == 'Online']
         
-        st.write("**Offline Sales**")
-        if not offline_sales_df.empty:
-            st.dataframe(offline_sales_df)
+        st.write("**Sales**")
+        if not day_sales_df.empty:
+            st.dataframe(day_sales_df)
         else:
-            st.write("No offline sales were recorded for this day.")
+            st.write("No sales were recorded for this day.")
             
-        st.write("**Online Sales**")
-        if not online_sales_df.empty:
-            st.dataframe(online_sales_df)
-        else:
-            st.write("No online sales were recorded for this day.")
+        # Also show archived expenses for the day (if any)
+        try:
+            expenses_df = db.get_expenses(status='archived', expense_date=date_to_view)
+            st.write("**Expenses**")
+            if not expenses_df.empty:
+                st.dataframe(expenses_df)
+            else:
+                st.write("No expenses were recorded for this day.")
+        except Exception:
+            # If expenses table doesn't exist, silently continue
+            pass
 
         # --- Daily totals (per-channel + grand total) (placed below the tables) ---
-        offline_total = offline_sales_df["total_sale"].sum() if (not offline_sales_df.empty and "total_sale" in offline_sales_df.columns) else 0.0
-        online_total = online_sales_df["total_sale"].sum() if (not online_sales_df.empty and "total_sale" in online_sales_df.columns) else 0.0
-        grand_total = offline_total + online_total
+        # Compute totals and include expenses to compute profit
+        total_sales = day_sales_df["total_sale"].sum() if (not day_sales_df.empty and "total_sale" in day_sales_df.columns) else 0.0
+        try:
+            expenses_df = db.get_expenses(status='archived', expense_date=date_to_view)
+            total_expenses = expenses_df['amount'].sum() if (not expenses_df.empty and 'amount' in expenses_df.columns) else 0.0
+        except Exception:
+            total_expenses = 0.0
+        grand_total = total_sales
+        profit = grand_total - total_expenses
 
         tcol1, tcol2, tcol3 = st.columns([1,1,1])
-        tcol1.metric("Offline Revenue", f"₹{offline_total:.2f}")
-        tcol2.metric("Online Revenue", f"₹{online_total:.2f}")
-        tcol3.metric("Grand Total", f"₹{grand_total:.2f}")
+        tcol1.metric("Revenue", f"₹{grand_total:.2f}")
+        tcol2.metric("Expenses", f"₹{total_expenses:.2f}")
+        tcol3.metric("Profit", f"₹{profit:.2f}")
 
         st.write("---")
         st.subheader(f"Danger Zone")
@@ -161,6 +140,11 @@ else:
             with c1:
                 if st.button("Yes, Permanently Delete", type="primary"):
                     db.delete_archived_sales_by_date(st.session_state.date_to_delete)
+                    # Also delete archived expenses for the date if present
+                    try:
+                        db.delete_archived_expenses_by_date(st.session_state.date_to_delete)
+                    except Exception:
+                        pass
                     st.success(f"Successfully deleted all data for {st.session_state.date_to_delete}.")
                     st.session_state.confirm_delete_history = False # Reset state
                     st.rerun()

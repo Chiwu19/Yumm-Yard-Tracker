@@ -53,7 +53,18 @@ def init_db():
         total_sale REAL NOT NULL,
         channel TEXT NOT NULL,
         sale_date TEXT NOT NULL,
-        status TEXT NOT NULL 
+        status TEXT NOT NULL
+    )
+    """)
+    
+    # Expenses Table (store manual expenses which can be archived per day)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        expense_date TEXT NOT NULL,
+        amount REAL NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL
     )
     """)
     conn.commit()
@@ -251,6 +262,49 @@ def delete_archived_sales_by_date(date_str):
     conn = connect_db()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM sales WHERE status = 'archived' AND sale_date = ?", (date_str,))
+    conn.commit()
+    # shared global connection - do not close here
+
+def add_expense(amount, description='', expense_date=None, status='live'):
+    """Add a manual expense entry. If expense_date is None, uses today's date."""
+    conn = connect_db()
+    cursor = conn.cursor()
+    if expense_date is None:
+        expense_date = date.today().isoformat()
+    cursor.execute(
+        "INSERT INTO expenses (expense_date, amount, description, status) VALUES (?, ?, ?, ?)",
+        (expense_date, amount, description, status)
+    )
+    conn.commit()
+    # shared global connection - do not close here
+
+def get_expenses(status='live', expense_date=None):
+    """Fetch expenses as a DataFrame with optional filters."""
+    conn = connect_db()
+    query = "SELECT * FROM expenses WHERE 1=1"
+    params = []
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    if expense_date:
+        query += " AND expense_date = ?"
+        params.append(expense_date)
+    df = pd.read_sql_query(query, conn, params=params)
+    return df
+
+def archive_live_expenses():
+    """Marks all live expenses as archived (End of Day action)."""
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE expenses SET status = 'archived' WHERE status = 'live'")
+    conn.commit()
+    # shared global connection - do not close here
+
+def delete_archived_expenses_by_date(date_str):
+    """Permanently deletes all archived expenses for a specific date."""
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM expenses WHERE status = 'archived' AND expense_date = ?", (date_str,))
     conn.commit()
     # shared global connection - do not close here
 

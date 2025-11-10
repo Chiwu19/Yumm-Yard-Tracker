@@ -20,17 +20,24 @@ if 'confirm_end_day' not in st.session_state:
     st.session_state.confirm_end_day = False
 if 'sale_to_remove' not in st.session_state:
     st.session_state.sale_to_remove = None
-# Temporary in-memory orders for the POS-style UI (one per channel)
+# Expense removal confirmation state
+if 'confirm_remove_expense' not in st.session_state:
+    st.session_state.confirm_remove_expense = False
+if 'expense_to_remove' not in st.session_state:
+    st.session_state.expense_to_remove = None
+# Temporary in-memory orders for the POS-style UI (only channel now)
 if 'current_order_offline' not in st.session_state:
     st.session_state.current_order_offline = {}
-if 'current_order_online' not in st.session_state:
-    st.session_state.current_order_online = {}
 
 
 def display_sales_section(sales_df, section_title):
     """Displays the sales table from a DataFrame."""
     if sales_df.empty:
-        st.info(f"No {section_title.lower()} sales have been logged for today yet.")
+        # If a specific section title was provided, use it; otherwise show a generic message.
+        if section_title and section_title.strip():
+            st.info(f"No {section_title.lower()} sales have been logged for today yet.")
+        else:
+            st.info("No sales have been logged for today yet.")
     else:
         # Reorder and rename columns for display to match the old format
         display_df = sales_df.rename(columns={
@@ -51,12 +58,11 @@ if 'live_sales_df' not in st.session_state:
     st.session_state.live_sales_df = db.get_sales(status='live')
 live_sales_df = st.session_state.live_sales_df
 
-# Split into channels in-memory to avoid multiple DB queries
+# Split into channels in-memory to avoid multiple DB queries (only Offline now)
 todays_offline_df = live_sales_df[live_sales_df['channel'] == 'Offline'].copy()
-todays_online_df = live_sales_df[live_sales_df['channel'] == 'Online'].copy()
 
-# --- Tabs for Offline and Online Sales ---
-offline_tab, online_tab = st.tabs(["🛒 Offline Sales", "🛵 Online Sales"])
+# --- Sales section (tabs removed) ---
+offline_tab = st.container()
 
 # Cache menus in session_state so they are NOT refetched on every rerun.
 # This keeps the menu stable across interactions until the user does a full refresh.
@@ -64,12 +70,11 @@ if 'menus' not in st.session_state:
     st.session_state.menus = db.get_menus()
 menus = st.session_state.menus
 offline_menu = menus.get('Offline', {})
-online_menu = menus.get('Online', {})
 
 with offline_tab:
-    st.header("Log a New Offline Sale")
+    st.header("Log a New Sale")
     if not offline_menu:
-        st.warning("Please add items to the Offline Menu on the 'Menu Management' page first.")
+        st.warning("Please add items to the Menu on the 'Menu Management' page first.")
     else:
         # Layout: left = menu with + / x controls, right = current order summary
         menu_col, order_col = st.columns([2, 1])
@@ -175,115 +180,80 @@ with offline_tab:
                         st.session_state.current_order_offline = {}
                         st.rerun()
 
-    st.header("Today's Offline Sales")
-    display_sales_section(todays_offline_df, "Offline")
+    # --- Sales display ---
+    st.header("Today's Sales")
+    display_sales_section(todays_offline_df, "")
 
-with online_tab:
-    st.header("Log a New Online Sale")
-    if not online_menu:
-        st.warning("Please add items to the Online Menu on the 'Menu Management' page first.")
+    # --- Expenses: manual entry and today's expenses display ---
+    st.subheader("Expenses")
+    with st.form("add_expense_form", clear_on_submit=True):
+        expense_amount = st.number_input("Amount (₹)", min_value=0.0, format="%.2f", key="expense_amount")
+        expense_desc = st.text_input("Description", key="expense_desc")
+        if st.form_submit_button("Add Expense"):
+            if expense_amount > 0:
+                db.add_expense(expense_amount, expense_desc)
+                st.success("Expense added for today.")
+                st.rerun()
+
+    # Show today's expenses (live)
+    today_str = date.today().isoformat()
+    try:
+        expenses_df = db.get_expenses(status='live', expense_date=today_str)
+    except Exception:
+        expenses_df = None
+
+    st.write("**Today's Expenses**")
+    if expenses_df is None or expenses_df.empty:
+        st.write("No expenses logged for today.")
     else:
-        # POS-style UI for Online menu
-        menu_col, order_col = st.columns([2, 1])
-        with menu_col:
-            st.subheader("Menu")
-            # Add search box to quickly filter long online menus
-            search_online = st.text_input("Search items...", key="online_menu_search")
-            if search_online:
-                filtered_online_menu = {
-                    item: price for item, price in online_menu.items()
-                    if search_online.lower() in item.lower()
-                }
-            else:
-                # By default show only the top 5 most common items (by historical sales)
-                try:
-                    top_items = db.get_top_items('Online', 5)
-                except Exception:
-                    top_items = []
-                if top_items:
-                    filtered_online_menu = {item: online_menu[item] for item in top_items if item in online_menu}
-                else:
-                    # No sales history yet — show first five items to avoid an empty list
-                    first_items = list(online_menu.items())[:5]
-                    filtered_online_menu = dict(first_items)
-                st.info("Showing top 5 items by default. Use the search box to find other items.")
-            if not filtered_online_menu:
-                st.info("No menu items match your search.")
-            else:
-                for item, price in filtered_online_menu.items():
-                    a, b, c, d = st.columns([4, 1, 1, 1])
-                    display_name = re.sub(r'^\*{1,2}\s*(.*?)\s*\*{1,2}$', r'\1', item).strip()
-                    a.markdown(f"**{display_name}**")
-                    b.write(f"₹{price:.2f}")
-                    if c.button("＋", key=f"online_plus_{item}"):
-                        st.session_state.current_order_online[item] = st.session_state.current_order_online.get(item, 0) + 1
-                        st.rerun()
-                    if d.button("×", key=f"online_remove_{item}"):
-                        if item in st.session_state.current_order_online:
-                            st.session_state.current_order_online.pop(item, None)
-                            st.rerun()
-        with order_col:
-            st.subheader("Order Summary")
-            order = st.session_state.current_order_online
-            if not order:
-                st.write("No items in the current order.")
-            else:
-                subtotal = 0.0
-                for itm, qty in list(order.items()):
-                    price = online_menu.get(itm, 0.0)
-                    line_total = price * qty
-                    subtotal += line_total
-                    r1, r2, r3 = st.columns([3, 1, 1])
-                    r1.write(f"{itm} (x{qty})")
-                    r2.write(f"₹{line_total:.2f}")
-                    # remove item entirely from summary (show only × icon here)
-                    if r3.button("×", key=f"online_remove_summary_{itm}"):
-                        if itm in st.session_state.current_order_online:
-                            st.session_state.current_order_online.pop(itm, None)
-                        st.rerun()
-                st.markdown("---")
-                st.write(f"**SUBTOTAL:** ₹{subtotal:.2f}")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Clear Order", key="online_clear_order"):
-                        st.session_state.current_order_online = {}
-                        st.rerun()
-                with c2:
-                    if st.button("Log Order", key="online_log_order", type="primary"):
-                        for itm, qty in list(order.items()):
-                            price = online_menu.get(itm, 0.0)
-                            sale_record = {
-                                "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
-                                "Item": itm,
-                                "Quantity": qty,
-                                "Price per Item (₹)": price,
-                                "Total Sale (₹)": price * qty,
-                                "Channel": "Online"
-                            }
-                            db.log_sale(sale_record)
-                            new_row = {
-                                "timestamp": sale_record["Timestamp"],
-                                "item_name": sale_record["Item"],
-                                "quantity": sale_record["Quantity"],
-                                "price_per_item": sale_record["Price per Item (₹)"],
-                                "total_sale": sale_record["Total Sale (₹)"],
-                                "channel": sale_record["Channel"],
-                                "sale_date": date.today().isoformat(),
-                                "status": "live"
-                            }
-                            if 'live_sales_df' in st.session_state:
-                                st.session_state.live_sales_df = pd.concat(
-                                    [st.session_state.live_sales_df, pd.DataFrame([new_row])],
-                                    ignore_index=True
-                                )
-                            else:
-                                st.session_state.live_sales_df = pd.DataFrame([new_row])
-                        st.success("Logged current order to today's sales.")
-                        st.session_state.current_order_online = {}
-                        st.rerun()
+        # Show only relevant columns for clarity
+        display_expenses = expenses_df[['id','expense_date', 'amount', 'description']].rename(
+            columns={'expense_date': 'Date', 'amount': 'Amount (₹)', 'description': 'Description'}
+        )
+        st.dataframe(display_expenses, use_container_width=True)
 
-    st.header("Today's Online Sales")
-    display_sales_section(todays_online_df, "Online")
+        # --- Remove Accidental Expense ---
+        st.subheader("Remove Accidental Expense")
+        try:
+            if expenses_df is None or expenses_df.empty:
+                st.write("No expenses to remove.")
+            else:
+                # Build a display mapping of "id: ₹amount - description"
+                expenses_df_sorted = expenses_df.copy()
+                expenses_df_sorted['display'] = expenses_df_sorted.apply(
+                    lambda r: f"{int(r['id'])}: ₹{r['amount']:.2f} - {str(r.get('description','')).strip()}",
+                    axis=1
+                )
+                exp_options = pd.Series(expenses_df_sorted.id.values, index=expenses_df_sorted.display).to_dict()
+                exp_to_remove_display = st.selectbox("Select an expense to remove", options=list(exp_options.keys()), key="select_expense_to_remove")
+                if st.button("Remove Selected Expense", key="remove_selected_expense"):
+                    st.session_state.confirm_remove_expense = True
+                    st.session_state.expense_to_remove = exp_options[exp_to_remove_display]
+
+                if st.session_state.confirm_remove_expense and st.session_state.expense_to_remove is not None:
+                    st.warning("**Are you sure you want to remove this expense?** This action cannot be undone.")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("Yes, Remove Expense", key="confirm_remove_expense_yes", type="primary"):
+                            try:
+                                db.delete_expense_by_id(st.session_state.expense_to_remove)
+                            except Exception:
+                                pass
+                            st.success("Expense removed successfully.")
+                            st.session_state.confirm_remove_expense = False
+                            st.session_state.expense_to_remove = None
+                            st.rerun()
+                    with c2:
+                        if st.button("Cancel", key="confirm_remove_expense_cancel"):
+                            st.session_state.confirm_remove_expense = False
+                            st.session_state.expense_to_remove = None
+                            st.rerun()
+        except Exception:
+            # If anything goes wrong building the remove UI, fail silently to not break Tracker.
+            pass
+
+# Online sales support removed — only Offline channel is supported in Tracker now.
+# (The Online tab and its UI were intentionally removed.)
 
 st.markdown("---")
 
@@ -294,7 +264,7 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("Remove Accidental Sale")
     
-    all_todays_sales_df = pd.concat([todays_offline_df, todays_online_df])
+    all_todays_sales_df = todays_offline_df
     
     if all_todays_sales_df.empty:
         st.info("No sales logged today to remove.")
@@ -361,23 +331,29 @@ if 'live_sales_df' not in st.session_state:
     st.session_state.live_sales_df = db.get_sales(status='live')
 live_sales_df = st.session_state.live_sales_df
 
-# Safely compute per-channel totals even if the DataFrame is empty or missing expected columns
+# Safely compute totals and include today's expenses to compute profit
 if live_sales_df is None or live_sales_df.empty:
-    live_offline_total = 0.0
-    live_online_total = 0.0
+    live_total = 0.0
 else:
     todays_offline_df = live_sales_df[live_sales_df.get('channel') == 'Offline'].copy()
-    todays_online_df = live_sales_df[live_sales_df.get('channel') == 'Online'].copy()
-    live_offline_total = todays_offline_df["total_sale"].sum() if not todays_offline_df.empty and "total_sale" in todays_offline_df.columns else 0.0
-    live_online_total = todays_online_df["total_sale"].sum() if not todays_online_df.empty and "total_sale" in todays_online_df.columns else 0.0
+    live_total = todays_offline_df["total_sale"].sum() if not todays_offline_df.empty and "total_sale" in todays_offline_df.columns else 0.0
 
-live_grand_total = live_offline_total + live_online_total
+# Fetch today's live expenses (if any)
+try:
+    today_str = date.today().isoformat()
+    expenses_df = db.get_expenses(status='live', expense_date=today_str)
+    expenses_total = expenses_df['amount'].sum() if (expenses_df is not None and not expenses_df.empty and 'amount' in expenses_df.columns) else 0.0
+except Exception:
+    expenses_total = 0.0
 
-# Display the three summary metrics with Grand Total emphasized
+profit = live_total - expenses_total
+live_grand_total = live_total  # keep naming aligned with previous usage
+
+# Display the summary metrics: Revenue, Expenses, Profit
 col1, col2, col3 = st.columns(3)
-col1.metric("Offline Revenue", f"₹{live_offline_total:.2f}")
-col2.metric("Online Revenue", f"₹{live_online_total:.2f}")
-col3.metric("Grand Total", f"₹{live_grand_total:.2f}")
+col1.metric("Revenue", f"₹{live_total:.2f}")
+col2.metric("Expenses", f"₹{expenses_total:.2f}")
+col3.metric("Profit", f"₹{profit:.2f}")
 
 st.markdown("---")
 
@@ -393,12 +369,18 @@ if st.session_state.confirm_end_day:
     c1, c2 = st.columns(2)
     with c1:
         if st.button("Yes, End the Day", type="primary"):
+            # Archive today's sales and expenses
             db.archive_live_sales()
+            try:
+                db.archive_live_expenses()
+            except Exception:
+                # Non-fatal if expenses table/function isn't available
+                pass
             # Clear local cache of live sales (they are now archived)
             if 'live_sales_df' in st.session_state:
                 st.session_state.live_sales_df = st.session_state.live_sales_df.iloc[0:0].copy()
             st.balloons()
-            st.success(f"Successfully saved all sales for {date.today().isoformat()} to your permanent record!")
+            st.success(f"Successfully saved all sales and expenses for {date.today().isoformat()} to your permanent record!")
             st.session_state.confirm_end_day = False
             st.rerun()
     with c2:
